@@ -1,6 +1,6 @@
 # Secrets
 .env
-credentials.json
+credentials_oauth.json
 token.json
 
 # Python

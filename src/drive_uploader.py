@@ -1,5 +1,6 @@
 import os
 import io
+import json
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -13,7 +14,7 @@ from googleapiclient.http import (
 )
 
 # ---------------------------------------------------------
-# Scopes : accès en lecture/écriture aux fichiers créés par l'app
+# Scopes : accès en lecture/écriture aux fichiers Drive
 # ---------------------------------------------------------
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
@@ -22,33 +23,57 @@ OAUTH_CREDENTIALS_PATH = "credentials_oauth.json"
 
 
 # ---------------------------------------------------------
-# Service Drive (OAuth utilisateur, Drive perso)
+# Service Drive (local + GitHub Actions)
 # ---------------------------------------------------------
 def _get_service():
-    creds = None
+    """
+    Fonction hybride :
+    - En local : utilise credentials_oauth.json + token.json
+    - Dans GitHub Actions : utilise les secrets d'environnement
+    """
 
-    # 1) On recharge un token existant si présent
-    if os.path.exists(TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+    # -----------------------------------------------------
+    # 1) MODE LOCAL : credentials_oauth.json existe
+    # -----------------------------------------------------
+    if os.path.exists(OAUTH_CREDENTIALS_PATH):
+        print("[INFO] Mode local : OAuth via credentials_oauth.json")
 
-    # 2) Si pas de creds ou invalides → on relance le flow OAuth
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            # Refresh silencieux
-            creds.refresh(Request())
-        else:
-            # Première auth : ouvre un navigateur, tu choisis ton compte Google
-            flow = InstalledAppFlow.from_client_secrets_file(
-                OAUTH_CREDENTIALS_PATH,
-                SCOPES
-            )
-            creds = flow.run_local_server(port=0)
+        creds = None
 
-        # 3) On sauvegarde le token pour les prochaines exécutions
-        with open(TOKEN_PATH, "w", encoding="utf-8") as token_file:
-            token_file.write(creds.to_json())
+        # Token existant ?
+        if os.path.exists(TOKEN_PATH):
+            creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
 
-    # 4) On construit le client Drive
+        # Token absent ou invalide → relancer OAuth
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    OAUTH_CREDENTIALS_PATH,
+                    SCOPES
+                )
+                creds = flow.run_local_server(port=0)
+
+            # Sauvegarde du token
+            with open(TOKEN_PATH, "w", encoding="utf-8") as token_file:
+                token_file.write(creds.to_json())
+
+        return build("drive", "v3", credentials=creds)
+
+    # -----------------------------------------------------
+    # 2) MODE GITHUB ACTIONS : utiliser les secrets
+    # -----------------------------------------------------
+    print("[INFO] Mode GitHub Actions : OAuth via secrets GitHub")
+
+    creds_data = {
+        "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+        "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+        "refresh_token": os.getenv("GOOGLE_REFRESH_TOKEN"),
+        "token_uri": "https://oauth2.googleapis.com/token"
+    }
+
+    creds = Credentials.from_authorized_user_info(creds_data)
     return build("drive", "v3", credentials=creds)
 
 
